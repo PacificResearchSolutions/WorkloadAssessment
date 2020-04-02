@@ -1,5 +1,3 @@
-alter session set current_schema = uhi_oncore_prod;
-
 with protocols as (
     select pcl.protocol_no,
     pcl.protocol_id,
@@ -170,19 +168,19 @@ select pcl.protocol_no,
 --pcl.status,
 --ps.status_date,
 --la.last_enrollment,
-case when pcl.investigator_initiated = 'Y' then 1 else 0 end as iit,
-case when pcl.summary4_report_desc = 'Interventional' then 1 else 0.25 end as dt4,
-case when pcl.investigational_drug = 'Y' then 1 else 0 end as drug,
-case when pcl.precision_trial = 'Y' then 1 else 0 end as precision,
-decode(s.count, null, 0, s.count) as sites,
-decode(ss.count, null, 0, ss.count) as subsites,
+decode(pcl.investigator_initiated, 'Y',1,0) iit,
+decode(pcl.summary4_report_desc, 'Interventional', 1, 0.25) dt4,
+decode(pcl.investigational_drug, 'Y',1,0) drug,
+decode(pcl.precision_trial, 'Y',1,0) precision,
+decode(s.count, null, 0, s.count) sites,
+decode(ss.count, null, 0, ss.count) subsites,
 si.count as sub_inv,
 rn.count as rn,
 case irb.irb_committee when 'UH IRB' then 1
                        when 'Western IRB (WIRB)' then 0.75
                        else 0.5 end as irb,
-case when sp.sponsor_type_description = 'National' then .5 else 1 end as sponsor,
-case when n.has_fda = 1 then 1 else 0 end as fda /*,
+decode(sp.sponsor_type_description, 'National', .5, 1) sponsor,
+decode(n.has_fda, 1, 1, 0) fda  /*,
 case when n.has_dtl = 1 then 1*s.count else 0 end as dtl */
 from protocols pcl
 left join sites s on s.protocol_no = pcl.protocol_no
