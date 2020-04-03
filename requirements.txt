@@ -1,4 +1,1 @@
-The follow versions of interpreters are required:
-
-Python 3.X
-R 3.4.X
+Make sure R is downloaded and the path to rscript.exe is located in your PATH variable.

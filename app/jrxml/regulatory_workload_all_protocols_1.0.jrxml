@@ -1,0 +1,499 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Created with Jaspersoft Studio version 6.6.0.final using JasperReports Library version 6.6.0  -->
+<jasperReport xmlns="http://jasperreports.sourceforge.net/jasperreports" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://jasperreports.sourceforge.net/jasperreports http://jasperreports.sourceforge.net/xsd/jasperreport.xsd" name="Regulatory Workload (all protocols)" pageWidth="1169" pageHeight="802" whenNoDataType="NoDataSection" columnWidth="1169" leftMargin="0" rightMargin="0" topMargin="0" bottomMargin="0" uuid="e381015c-6894-4074-a27e-06654720290e">
+	<property name="com.jaspersoft.studio.data.defaultdataadapter" value="OnCore Prod"/>
+	<property name="com.jaspersoft.studio.data.sql.tables" value=""/>
+	<property name="com.jaspersoft.studio.report.description" value=""/>
+	<queryString>
+		<![CDATA[with protocols as (
+    select pcl.protocol_no,
+    pcl.protocol_id,
+    pcl.treatment_type_desc,
+    pcl.investigator_initiated,
+    pcl.created_date,
+    pcl.summary4_report_desc,
+    pcl.investigational_drug,
+    pcl.precision_trial,
+    pcl.status,
+    case when cto.protocol_no is null then 0 else 1 end as cto,
+    case when cto_reg.protocol_no is null then 0 else 1 end as cto_reg,
+    case when excl.protocol_no is null then 0 else 1 end as exclude_please,
+    case when incl.protocol_no is null then 0 else 1 end as include_please,
+    case when cog.protocol_no is null then 0 else 1 end as cog
+    from sv_protocol pcl
+    left join (
+    select *
+    from sv_pcl_mgmt_mgmtgroup
+    where mgmt_group_description = 'Accrual Exclusion'
+    ) excl on excl.protocol_no = pcl.protocol_no
+    left join (
+    select *
+    from sv_pcl_mgmt_mgmtgroup
+    where mgmt_group_description = 'Accrual Inclusion'
+    ) incl on incl.protocol_no = pcl.protocol_no
+    left join (
+    select *
+    from sv_pcl_mgmt_mgmtgroup
+    where mgmt_group_description = 'Clinical Trials Office'
+    ) cto on cto.protocol_no = pcl.protocol_no
+    left join (
+    select *
+    from sv_pcl_mgmt_mgmtgroup
+    where mgmt_group_description = 'CTO Regulatory'
+  ) cto_reg on cto_reg.protocol_no = pcl.protocol_no
+    left join (
+    select *
+    from sv_pcl_mgmt_mgmtgroup
+    where mgmt_group_description = 'COG'
+    ) cog on cog.protocol_no = pcl.protocol_no
+    order by exclude_please desc, pcl.protocol_no
+),
+
+sites as (
+select protocol_no,
+count(*) count
+from (
+select protocol_no,
+institution_name,
+study_sites
+from sv_pcl_institution
+where institution_name != 'Hawaii Cancer Consortium')
+group by protocol_no
+order by protocol_no
+),
+
+sub_sites as (
+select protocol_no,
+count(*) count
+from (
+select protocol_no,
+study_site_name,
+status
+from rv_pcl_study_site
+where institution_name != 'Hawaii Cancer Consortium'
+and study_site_name != 'Cancer Center of Hawaii')
+group by protocol_no
+order by protocol_no
+),
+
+sub_investigators as (
+select protocol_no,
+count(*) count
+from (
+select protocol_no,
+staff_name,
+role_desc
+from sv_pcl_staff_role
+where role_desc = 'Sub-Investigator'
+and subject_mrn is null
+and stop_date is not null)
+group by protocol_no
+order by protocol_no
+),
+
+research_nurses as (
+select protocol_no,
+count(*) count
+from (
+select protocol_no,
+staff_name,
+role_desc
+from sv_pcl_staff_role
+where role_desc = 'Clinical Research Nurse'
+and organization_id != 2
+and subject_mrn is null
+and stop_date is not null)
+group by protocol_no
+order by protocol_no
+),
+
+irb as (
+select protocol_no,
+meeting_date,
+irb_committee
+from (
+select lr.protocol_no,
+lr.meeting_date,
+irb.irb_committee
+from (
+select protocol_no,
+max(meeting_date) meeting_date
+from (
+select protocol_no,
+meeting_date
+from sv_irb_review
+where institution_name = 'Hawaii Cancer Consortium')
+group by protocol_no) lr
+left join sv_irb_review irb on irb.protocol_no = lr.protocol_no and lr.meeting_date = irb.meeting_date)
+group by protocol_no, meeting_date, irb_committee
+order by protocol_no, meeting_date desc
+),
+
+sponsor as (
+select protocol_no,
+sponsor_type_description
+from sv_pcl_sponsor
+where principal_sponsor = 'Y'
+),
+
+last_accrual as (
+select protocol_no,
+max(on_studydate) last_enrollment
+from sv_pcl_subject
+group by protocol_no
+order by protocol_no
+),
+
+pcl_status as (
+select cs.protocol_no,
+ps.status,
+cs.current_status_date as status_date
+from(
+select protocol_no,
+max(status_date) as current_status_date
+from sv_pcl_status
+where status != 'NEW'
+group by protocol_no
+) cs
+left join sv_pcl_status ps on ps.protocol_no = cs.protocol_no and ps.status_date = cs.current_status_date
+order by protocol_no
+),
+
+notes as (
+select protocol_no,
+sum(has_fda) as has_fda,
+sum(has_dtl) as has_dtl
+from (
+select protocol_no,
+case when instr(lower(note),'fda') != 0 then 1 else 0 end as has_fda,
+case when instr(lower(note),'dtl') != 0 then 1 else 0 end as has_dtl
+from sv_pcl_notes)
+group by protocol_no
+)
+
+select pcl.protocol_no,
+--pcl.status,
+--ps.status_date,
+--la.last_enrollment,
+decode(pcl.investigator_initiated, 'Y',1,0) iit,
+decode(pcl.summary4_report_desc, 'Interventional', 1, 0.25) dt4,
+decode(pcl.investigational_drug, 'Y',1,0) drug,
+decode(pcl.precision_trial, 'Y',1,0) precision,
+decode(s.count, null, 0, s.count) sites,
+decode(ss.count, null, 0, ss.count) subsites,
+si.count as sub_inv,
+rn.count as rn,
+case irb.irb_committee when 'UH IRB' then 1
+                       when 'Western IRB (WIRB)' then 0.75
+                       else 0.5 end as irb,
+decode(sp.sponsor_type_description, 'National', .5, 1) sponsor,
+decode(n.has_fda, 1, 1, 0) fda  /*,
+case when n.has_dtl = 1 then 1*s.count else 0 end as dtl */
+from protocols pcl
+left join sites s on s.protocol_no = pcl.protocol_no
+left join sub_sites ss on ss.protocol_no = pcl.protocol_no
+left join sub_investigators si on si.protocol_no = pcl.protocol_no
+left join research_nurses rn on rn.protocol_no = pcl.protocol_no
+left join irb on irb.protocol_no = pcl.protocol_no
+left join sponsor sp on sp.protocol_no = pcl.protocol_no
+left join last_accrual la on la.protocol_no = pcl.protocol_no
+left join pcl_status ps on ps.protocol_no = pcl.protocol_no and ps.status = pcl.status
+left join notes n on n.protocol_no = pcl.protocol_no
+where /* pcl.status not in ('NEW', 'IRB STUDY CLOSURE','SUSPENDED','ABANDONED','TERMINATED')
+and */ (pcl.cto = 1 or pcl.cto_reg = 1 or summary4_report_desc = 'Interventional')
+and pcl.cog = 0
+order by /*case status when 'PRMC APPROVAL' then 1
+                     when 'IRB INITIAL APPROVAL' then 2
+                     when 'OPEN TO ACCRUAL' then 3
+                     when 'CLOSED TO ACCRUAL' then 4
+                     else 5 end, */
+protocol_no]]>
+	</queryString>
+	<field name="PROTOCOL_NO" class="java.lang.String">
+		<property name="com.jaspersoft.studio.field.label" value="PROTOCOL_NO"/>
+	</field>
+	<field name="IIT" class="java.math.BigDecimal">
+		<property name="com.jaspersoft.studio.field.label" value="SUBJECT_SEQ_NO"/>
+	</field>
+	<field name="DT4" class="java.math.BigDecimal">
+		<property name="com.jaspersoft.studio.field.label" value="SUBJECT_MRN"/>
+	</field>
+	<field name="DRUG" class="java.math.BigDecimal">
+		<property name="com.jaspersoft.studio.field.label" value="REPORTED_DATE"/>
+	</field>
+	<field name="PRECISION" class="java.math.BigDecimal">
+		<property name="com.jaspersoft.studio.field.label" value="DEVIATION_DATE"/>
+	</field>
+	<field name="SITES" class="java.math.BigDecimal">
+		<property name="com.jaspersoft.studio.field.label" value="TREATING_HOSP"/>
+	</field>
+	<field name="SUBSITES" class="java.math.BigDecimal">
+		<property name="com.jaspersoft.studio.field.label" value="REPORTED_BY_NAME"/>
+	</field>
+	<field name="SUB_INV" class="java.math.BigDecimal">
+		<property name="com.jaspersoft.studio.field.label" value="CRAS"/>
+	</field>
+	<field name="RN" class="java.math.BigDecimal">
+		<property name="com.jaspersoft.studio.field.label" value="ISSUES"/>
+	</field>
+	<field name="IRB" class="java.math.BigDecimal">
+		<property name="com.jaspersoft.studio.field.label" value="ISSUES"/>
+	</field>
+	<field name="SPONSOR" class="java.math.BigDecimal">
+		<property name="com.jaspersoft.studio.field.label" value="ISSUES"/>
+	</field>
+	<field name="FDA" class="java.math.BigDecimal">
+		<property name="com.jaspersoft.studio.field.label" value="ISSUES"/>
+	</field>
+	<background>
+		<band splitType="Stretch"/>
+	</background>
+	<title>
+		<band height="30">
+			<staticText>
+				<reportElement mode="Opaque" x="190" y="0" width="89" height="30" backcolor="#F7F7F7" uuid="e559f980-09df-43b8-8828-5a404b1fe18f"/>
+				<box padding="2">
+					<pen lineWidth="0.5"/>
+				</box>
+				<textElement textAlignment="Left" verticalAlignment="Bottom">
+					<font fontName="times new roman" isBold="true"/>
+				</textElement>
+				<text><![CDATA[IIT]]></text>
+			</staticText>
+			<staticText>
+				<reportElement mode="Opaque" x="813" y="0" width="89" height="30" backcolor="#F7F7F7" uuid="559e6a17-8e4c-4faf-bd85-79d8be079add"/>
+				<box padding="2">
+					<pen lineWidth="0.5"/>
+				</box>
+				<textElement textAlignment="Left" verticalAlignment="Bottom">
+					<font fontName="times new roman" isBold="true"/>
+				</textElement>
+				<text><![CDATA[RN]]></text>
+			</staticText>
+			<staticText>
+				<reportElement mode="Opaque" x="546" y="0" width="89" height="30" backcolor="#F7F7F7" uuid="05c11f19-fac8-40b3-af01-2ba7adb79d1a"/>
+				<box padding="2">
+					<pen lineWidth="0.5"/>
+				</box>
+				<textElement textAlignment="Left" verticalAlignment="Bottom">
+					<font fontName="times new roman" isBold="true"/>
+				</textElement>
+				<text><![CDATA[Sites]]></text>
+			</staticText>
+			<staticText>
+				<reportElement mode="Opaque" x="902" y="0" width="89" height="30" backcolor="#F7F7F7" uuid="ad48edcd-f833-470a-b1bb-83a626abc487"/>
+				<box padding="2">
+					<pen lineWidth="0.5"/>
+				</box>
+				<textElement textAlignment="Left" verticalAlignment="Bottom">
+					<font fontName="times new roman" isBold="true"/>
+				</textElement>
+				<text><![CDATA[IRB]]></text>
+			</staticText>
+			<staticText>
+				<reportElement mode="Opaque" x="991" y="0" width="89" height="30" backcolor="#F7F7F7" uuid="7a1c31ba-5555-4e21-bfb1-2eecac3fbac2"/>
+				<box padding="2">
+					<pen lineWidth="0.5"/>
+				</box>
+				<textElement textAlignment="Left" verticalAlignment="Bottom">
+					<font fontName="times new roman" isBold="true"/>
+				</textElement>
+				<text><![CDATA[Sponsor]]></text>
+			</staticText>
+			<staticText>
+				<reportElement mode="Opaque" x="279" y="0" width="89" height="30" backcolor="#F7F7F7" uuid="0d9051b9-f4c3-4ae4-a3d0-031d1d78f9c8"/>
+				<box padding="2">
+					<pen lineWidth="0.5"/>
+				</box>
+				<textElement textAlignment="Left" verticalAlignment="Bottom">
+					<font fontName="times new roman" isBold="true"/>
+				</textElement>
+				<text><![CDATA[DT4]]></text>
+			</staticText>
+			<staticText>
+				<reportElement mode="Opaque" x="724" y="0" width="89" height="30" backcolor="#F7F7F7" uuid="5a169cf4-5867-4a1f-ad84-19f787990a79"/>
+				<box padding="2">
+					<pen lineWidth="0.5"/>
+				</box>
+				<textElement textAlignment="Left" verticalAlignment="Bottom">
+					<font fontName="times new roman" isBold="true"/>
+				</textElement>
+				<text><![CDATA[Sub_inv]]></text>
+			</staticText>
+			<staticText>
+				<reportElement mode="Opaque" x="368" y="0" width="89" height="30" backcolor="#F7F7F7" uuid="477ff4a1-ab49-42bd-b03f-3fca44c25643"/>
+				<box padding="2">
+					<pen lineWidth="0.5"/>
+				</box>
+				<textElement textAlignment="Left" verticalAlignment="Bottom">
+					<font fontName="times new roman" isBold="true"/>
+				</textElement>
+				<text><![CDATA[Drug]]></text>
+			</staticText>
+			<staticText>
+				<reportElement mode="Opaque" x="635" y="0" width="89" height="30" backcolor="#F7F7F7" uuid="94284615-76a4-48eb-8f36-8f4b221e7dbb"/>
+				<box padding="2">
+					<pen lineWidth="0.5"/>
+				</box>
+				<textElement textAlignment="Left" verticalAlignment="Bottom">
+					<font fontName="times new roman" isBold="true"/>
+				</textElement>
+				<text><![CDATA[Subsites]]></text>
+			</staticText>
+			<staticText>
+				<reportElement mode="Opaque" x="1080" y="0" width="89" height="30" backcolor="#F7F7F7" uuid="3c0bd3da-0828-47a4-832f-e49519b00f13"/>
+				<box padding="2">
+					<pen lineWidth="0.5"/>
+				</box>
+				<textElement textAlignment="Left" verticalAlignment="Bottom">
+					<font fontName="times new roman" isBold="true"/>
+				</textElement>
+				<text><![CDATA[FDA]]></text>
+			</staticText>
+			<staticText>
+				<reportElement mode="Opaque" x="457" y="0" width="89" height="30" backcolor="#F7F7F7" uuid="82c2ef4d-6aba-4f23-90e5-fee89f79dba7"/>
+				<box padding="2">
+					<pen lineWidth="0.5"/>
+				</box>
+				<textElement textAlignment="Left" verticalAlignment="Bottom">
+					<font fontName="times new roman" isBold="true"/>
+				</textElement>
+				<text><![CDATA[Precision]]></text>
+			</staticText>
+			<staticText>
+				<reportElement mode="Opaque" x="0" y="0" width="190" height="30" backcolor="#F7F7F7" uuid="2e25bbde-3100-4e7a-823c-a2e0636bd3b1"/>
+				<box padding="2">
+					<pen lineWidth="0.5"/>
+				</box>
+				<textElement textAlignment="Left" verticalAlignment="Bottom">
+					<font fontName="times new roman" isBold="true"/>
+				</textElement>
+				<text><![CDATA[Protocol]]></text>
+			</staticText>
+		</band>
+	</title>
+	<detail>
+		<band height="30" splitType="Stretch">
+			<textField isBlankWhenNull="true">
+				<reportElement x="0" y="0" width="190" height="30" uuid="5d12db34-a853-489e-bad7-cd4f8e35acf5"/>
+				<box padding="2">
+					<pen lineWidth="0.5"/>
+				</box>
+				<textElement textAlignment="Left" verticalAlignment="Bottom">
+					<font fontName="times new roman"/>
+				</textElement>
+				<textFieldExpression><![CDATA[$F{PROTOCOL_NO}]]></textFieldExpression>
+			</textField>
+			<textField isBlankWhenNull="true">
+				<reportElement x="190" y="0" width="89" height="30" uuid="ce6fb0d8-5514-4666-be42-25bca923d760"/>
+				<box padding="2">
+					<pen lineWidth="0.5"/>
+				</box>
+				<textElement textAlignment="Left" verticalAlignment="Bottom">
+					<font fontName="times new roman"/>
+				</textElement>
+				<textFieldExpression><![CDATA[$F{IIT}]]></textFieldExpression>
+			</textField>
+			<textField isBlankWhenNull="true">
+				<reportElement x="279" y="0" width="89" height="30" uuid="c8e98f53-6437-4eed-a3b3-7165b5ab7a4f"/>
+				<box padding="2">
+					<pen lineWidth="0.5"/>
+				</box>
+				<textElement textAlignment="Left" verticalAlignment="Bottom">
+					<font fontName="times new roman"/>
+				</textElement>
+				<textFieldExpression><![CDATA[$F{DT4}]]></textFieldExpression>
+			</textField>
+			<textField isBlankWhenNull="true">
+				<reportElement x="368" y="0" width="89" height="30" uuid="603e9970-056e-43db-9738-42eaf4d3e097"/>
+				<box padding="2">
+					<pen lineWidth="0.5"/>
+				</box>
+				<textElement textAlignment="Left" verticalAlignment="Bottom">
+					<font fontName="times new roman"/>
+				</textElement>
+				<textFieldExpression><![CDATA[$F{DRUG}]]></textFieldExpression>
+			</textField>
+			<textField isBlankWhenNull="true">
+				<reportElement x="457" y="0" width="89" height="30" uuid="833e746d-ef6d-4843-8f54-4d543e912996"/>
+				<box padding="2">
+					<pen lineWidth="0.5"/>
+				</box>
+				<textElement textAlignment="Left" verticalAlignment="Bottom">
+					<font fontName="times new roman"/>
+				</textElement>
+				<textFieldExpression><![CDATA[$F{PRECISION}]]></textFieldExpression>
+			</textField>
+			<textField isBlankWhenNull="true">
+				<reportElement x="546" y="0" width="89" height="30" uuid="2d1bff1a-4ce4-4ae0-aa1d-5a85a31d7e53"/>
+				<box padding="2">
+					<pen lineWidth="0.5"/>
+				</box>
+				<textElement textAlignment="Left" verticalAlignment="Bottom">
+					<font fontName="times new roman"/>
+				</textElement>
+				<textFieldExpression><![CDATA[$F{SITES}]]></textFieldExpression>
+			</textField>
+			<textField isBlankWhenNull="true">
+				<reportElement x="635" y="0" width="89" height="30" uuid="8e4a1fd5-40e8-4ecf-8e2b-7da76ece32a1"/>
+				<box padding="2">
+					<pen lineWidth="0.5"/>
+				</box>
+				<textElement textAlignment="Left" verticalAlignment="Bottom">
+					<font fontName="times new roman"/>
+				</textElement>
+				<textFieldExpression><![CDATA[$F{SUBSITES}]]></textFieldExpression>
+			</textField>
+			<textField isBlankWhenNull="true">
+				<reportElement x="724" y="0" width="89" height="30" uuid="d028c440-b801-441d-97f3-2308bf9e984a"/>
+				<box padding="2">
+					<pen lineWidth="0.5"/>
+				</box>
+				<textElement textAlignment="Left" verticalAlignment="Bottom">
+					<font fontName="times new roman"/>
+				</textElement>
+				<textFieldExpression><![CDATA[$F{SUB_INV}]]></textFieldExpression>
+			</textField>
+			<textField isBlankWhenNull="true">
+				<reportElement x="813" y="0" width="89" height="30" uuid="f6897703-6be9-48e7-8b2c-e7204b0166ae"/>
+				<box padding="2">
+					<pen lineWidth="0.5"/>
+				</box>
+				<textElement textAlignment="Left" verticalAlignment="Bottom">
+					<font fontName="times new roman"/>
+				</textElement>
+				<textFieldExpression><![CDATA[$F{RN}]]></textFieldExpression>
+			</textField>
+			<textField isBlankWhenNull="true">
+				<reportElement x="902" y="0" width="89" height="30" uuid="5c08c404-ce21-49cc-bb93-2d04f131819f"/>
+				<box padding="2">
+					<pen lineWidth="0.5"/>
+				</box>
+				<textElement textAlignment="Left" verticalAlignment="Bottom">
+					<font fontName="times new roman"/>
+				</textElement>
+				<textFieldExpression><![CDATA[$F{IRB}]]></textFieldExpression>
+			</textField>
+			<textField isBlankWhenNull="true">
+				<reportElement x="991" y="0" width="89" height="30" uuid="430b32c1-f1a7-4236-ab58-704db64dcab6"/>
+				<box padding="2">
+					<pen lineWidth="0.5"/>
+				</box>
+				<textElement textAlignment="Left" verticalAlignment="Bottom">
+					<font fontName="times new roman"/>
+				</textElement>
+				<textFieldExpression><![CDATA[$F{SPONSOR}]]></textFieldExpression>
+			</textField>
+			<textField isBlankWhenNull="true">
+				<reportElement x="1080" y="0" width="89" height="30" uuid="d8176bb8-b77c-4f5d-85bb-d177aee723e7"/>
+				<box padding="2">
+					<pen lineWidth="0.5"/>
+				</box>
+				<textElement textAlignment="Left" verticalAlignment="Bottom">
+					<font fontName="times new roman"/>
+				</textElement>
+				<textFieldExpression><![CDATA[$F{FDA}]]></textFieldExpression>
+			</textField>
+		</band>
+	</detail>
+</jasperReport>
